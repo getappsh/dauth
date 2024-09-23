@@ -1,0 +1,55 @@
+stages:
+  - build
+  - deploy
+
+build_develop:
+  stage: build
+  tags:
+  - shell
+  script:
+    - echo "docker login to GCP artifact registry"
+    - gcloud auth activate-service-account $CI_REGISTRY_SA_NAME --key-file=$GCP_REGISTRY_SA_KEY_FILE
+    - gcloud auth print-access-token | docker login -u oauth2accesstoken --password-stdin "https://$CI_REGISTRY"
+    - docker build --tag $CI_REGISTRY/$CLIENT/auth:$CI_COMMIT_SHORT_SHA-dev -f .ci/Dockerfile.cicd .
+    - docker push $CI_REGISTRY/$CLIENT/auth:$CI_COMMIT_SHORT_SHA-dev
+    - docker rmi $CI_REGISTRY/$CLIENT/auth:$CI_COMMIT_SHORT_SHA-dev
+  only:
+    - develop
+
+deploy_develop:
+  stage: deploy
+  tags:
+  - shell
+  script:
+    - |
+      echo "Update AUTH_VERSION variable in devops repository. It is used as an image tag in related helm chart"
+
+      curl --silent -k --request PUT -H "PRIVATE-TOKEN: $DEVOPS_REPO_PAT" \
+      $CI_API_V4_URL/projects/$DEVOPS_REPO_ID/variables/AUTH_VERSION \
+      --form "value=$CI_COMMIT_SHORT_SHA-dev"
+
+      echo "Trigger devops repository pipeline"
+
+      curl -X POST \
+      -F token=$CI_JOB_TOKEN \
+      -F ref=master \
+      -F "variables[ENV]=develop" \
+      https://gitlab.linnovate.net/api/v4/projects/$DEVOPS_REPO_ID/trigger/pipeline
+  only:
+    - develop
+
+build_master:
+  stage: build
+  tags:
+  - shell
+  script:
+    - echo "docker login to GCP artifact registry"
+    - gcloud auth activate-service-account $CI_REGISTRY_SA_NAME --key-file=$GCP_REGISTRY_SA_KEY_FILE
+    - gcloud auth print-access-token | docker login -u oauth2accesstoken --password-stdin "https://$CI_REGISTRY"
+    - docker build --tag $CI_REGISTRY/$CLIENT/auth:$CI_COMMIT_SHORT_SHA -f .ci/Dockerfile.cicd .
+    - docker push $CI_REGISTRY/$CLIENT/auth:$CI_COMMIT_SHORT_SHA
+    - docker rmi $CI_REGISTRY/$CLIENT/auth:$CI_COMMIT_SHORT_SHA
+  only:
+    - master
+    - /^release-.*$/
+    - merge_requests
